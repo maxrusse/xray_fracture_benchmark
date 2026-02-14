@@ -6,13 +6,14 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 
 from benchmark.data import FracAtlasSegDataset
 from benchmark.losses import build_loss
 from benchmark.metrics import summarize_segmentation_metrics
-from benchmark.model import SimpleUNet
+from benchmark.model import build_model_from_config
 
 
 @dataclasses.dataclass
@@ -28,14 +29,7 @@ def resolve_device(device_hint: str) -> torch.device:
 
 
 def build_model(config: dict[str, Any]) -> nn.Module:
-    model_cfg = config.get("model", {})
-    if model_cfg.get("name", "simple_unet") != "simple_unet":
-        raise ValueError("Only model.name=simple_unet is supported in this baseline.")
-    return SimpleUNet(
-        in_channels=int(model_cfg.get("in_channels", 3)),
-        out_channels=int(model_cfg.get("out_channels", 1)),
-        base_channels=int(model_cfg.get("base_channels", 32)),
-    )
+    return build_model_from_config(config.get("model", {}))
 
 
 def build_dataloaders(config: dict[str, Any], repo_root: pathlib.Path) -> tuple[DataLoader, DataLoader, DataLoader]:
@@ -92,6 +86,20 @@ def _to_device(batch: dict[str, torch.Tensor], device: torch.device) -> tuple[to
     return images, masks
 
 
+def _extract_logits(output: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor:
+    if isinstance(output, dict):
+        if "out" not in output:
+            raise ValueError("Model output dict is missing 'out' key.")
+        return output["out"]
+    return output
+
+
+def _align_logits_to_target(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    if logits.shape[-2:] != targets.shape[-2:]:
+        logits = F.interpolate(logits, size=targets.shape[-2:], mode="bilinear", align_corners=False)
+    return logits
+
+
 def build_criterion(config: dict[str, Any]) -> nn.Module:
     return build_loss(config)
 
@@ -118,7 +126,9 @@ def run_train_epoch(
 
         use_amp = runtime.amp and runtime.device.type == "cuda"
         with torch.autocast(device_type=runtime.device.type, enabled=use_amp):
-            logits = model(images)
+            output = model(images)
+            logits = _extract_logits(output)
+            logits = _align_logits_to_target(logits, masks)
             loss = criterion(logits, masks)
         if scaler is not None and use_amp:
             scaler.scale(loss).backward()
@@ -164,7 +174,9 @@ def run_eval_epoch(
             images, masks = _to_device(batch, runtime.device)
             use_amp = runtime.amp and runtime.device.type == "cuda"
             with torch.autocast(device_type=runtime.device.type, enabled=use_amp):
-                logits = model(images)
+                output = model(images)
+                logits = _extract_logits(output)
+                logits = _align_logits_to_target(logits, masks)
                 loss = criterion(logits, masks)
             loss_sum += float(loss.item())
             count += 1

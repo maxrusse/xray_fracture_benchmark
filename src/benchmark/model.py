@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 import torch.nn as nn
+from torchvision.models import ResNet50_Weights
+from torchvision.models.segmentation import DeepLabV3_ResNet50_Weights, deeplabv3_resnet50
 
 
 class ConvBlock(nn.Module):
@@ -61,3 +65,30 @@ class SimpleUNet(nn.Module):
 
         return self.out_conv(d1)
 
+
+def build_model_from_config(model_cfg: dict[str, Any]) -> nn.Module:
+    name = str(model_cfg.get("name", "simple_unet")).lower()
+    if name == "simple_unet":
+        return SimpleUNet(
+            in_channels=int(model_cfg.get("in_channels", 3)),
+            out_channels=int(model_cfg.get("out_channels", 1)),
+            base_channels=int(model_cfg.get("base_channels", 32)),
+        )
+
+    if name == "deeplabv3_resnet50":
+        pretrained = bool(model_cfg.get("pretrained", False))
+        pretrained_backbone = bool(model_cfg.get("pretrained_backbone", False))
+        weights = DeepLabV3_ResNet50_Weights.DEFAULT if pretrained else None
+        backbone_weights = ResNet50_Weights.IMAGENET1K_V2 if pretrained_backbone else None
+
+        model = deeplabv3_resnet50(
+            weights=weights,
+            weights_backbone=backbone_weights,
+            aux_loss=False,
+        )
+        out_channels = int(model_cfg.get("out_channels", 1))
+        in_features = model.classifier[-1].in_channels
+        model.classifier[-1] = nn.Conv2d(in_features, out_channels, kernel_size=1)
+        return model
+
+    raise ValueError(f"Unsupported model.name: {name}")

@@ -44,3 +44,6 @@ Outputs:
   - `python .\scripts\validate.py --config .\configs\fast_dev.yaml --checkpoint .\runs\fast_dev\best_model.pt --output .\runs\fast_dev\validate_metrics.json`
   - `python .\scripts\test.py --config .\configs\fast_dev.yaml --checkpoint .\runs\fast_dev\best_model.pt --output .\runs\fast_dev\test_metrics.json`
 - Primary model selection metric is `dice_pos` (fractured-only Dice), not all-sample Dice.
+- Stronger model track (DeepLabV3-ResNet50):
+  - Fast check: `python .\scripts\train.py --config .\configs\deeplabv3_fast.yaml --output-dir .\runs\deeplab_fast`
+  - Full run: `python .\scripts\train.py --config .\configs\deeplabv3_resnet50.yaml --output-dir .\runs\deeplab_full`

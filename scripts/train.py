@@ -57,6 +57,14 @@ def main() -> int:
     scaler = torch.amp.GradScaler(device.type, enabled=bool(runtime.amp and device.type == "cuda"))
 
     epochs = int(training_cfg.get("epochs", 20))
+    scheduler_name = str(training_cfg.get("scheduler", "none")).lower()
+    scheduler = None
+    if scheduler_name == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(epochs, 1),
+            eta_min=float(training_cfg.get("min_lr", 1e-6)),
+        )
     max_train_batches = training_cfg.get("max_train_batches")
     max_eval_batches = training_cfg.get("max_eval_batches")
     max_train_batches = int(max_train_batches) if max_train_batches is not None else None
@@ -86,6 +94,7 @@ def main() -> int:
         )
         row = {
             "epoch": epoch,
+            "lr": float(optimizer.param_groups[0]["lr"]),
             "train_loss": train_loss,
             **{f"val_{k}": v for k, v in val_metrics.items()},
         }
@@ -97,6 +106,9 @@ def main() -> int:
             best_score = current_score
             best_epoch = epoch
             torch.save(model.state_dict(), output_dir / "best_model.pt")
+
+        if scheduler is not None:
+            scheduler.step()
 
     torch.save(model.state_dict(), output_dir / "last_model.pt")
     save_yaml(output_dir / "resolved_config.yaml", config)
