@@ -1,4 +1,4 @@
-# xray_llm_sota
+# xray_fracture_benchmark
 
 LLM-driven experimentation for X-ray classification on a small open dataset.
 
@@ -13,8 +13,8 @@ This project uses `PneumoniaMNIST` from MedMNIST:
 
 ```powershell
 cd C:\Users\Max\code
-C:\Users\Max\code\xray_llm_sota_venv\Scripts\Activate.ps1
-cd .\xray_llm_sota
+C:\Users\Max\code\xray_fracture_benchmark_venv\Scripts\Activate.ps1
+cd .\xray_fracture_benchmark
 python -m pip install -r requirements.txt
 ```
 
@@ -50,4 +50,3 @@ Artifacts saved per run:
 - `llm_response.txt` (when LLM is used)
 - `best_model.pt`
 - `metrics.json`
-
