@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: no-dataset-files
+        name: Block dataset/artifact files from git
+        entry: python scripts/check_no_dataset_files.py
+        language: system
+        pass_filenames: false
+

@@ -1,0 +1,44 @@
+name: Block Dataset Files
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fail if dataset/artifact files are tracked
+        shell: bash
+        run: |
+          set -euo pipefail
+          forbidden=$(
+            git ls-files \
+              'data/**' \
+              'results/**' \
+              'artifacts/**' \
+              'runs/**' \
+              '*.zip' \
+              '*.tar' \
+              '*.tar.gz' \
+              '*.tgz' \
+              '*.7z' \
+              '*.dcm' \
+              '*.nii' \
+              '*.nii.gz'
+          )
+
+          if [ -n "$forbidden" ]; then
+            echo "Tracked dataset/artifact files are not allowed:"
+            echo "$forbidden"
+            exit 1
+          fi
+
+          echo "No forbidden tracked dataset/artifact files found."
+

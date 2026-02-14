@@ -1,0 +1,11 @@
+seed: 42
+data_dir: data/pneumoniamnist
+batch_size: 64
+num_workers: 0
+image_size: 224
+epochs: 6
+learning_rate: 0.0005
+weight_decay: 0.0001
+model_name: tf_efficientnetv2_b0
+pretrained: false
+
