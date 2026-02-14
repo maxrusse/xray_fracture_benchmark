@@ -8,9 +8,11 @@ input:
 training:
   batch_size: 4
   num_workers: 0
-  epochs: 20
+  epochs: 2
   learning_rate: 0.0003
   weight_decay: 0.0001
+  max_train_batches: 10
+  max_eval_batches: 5
 model:
   name: simple_unet
   in_channels: 3

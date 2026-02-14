@@ -37,6 +37,9 @@ Build a clean, reproducible local benchmark for 2D fracture X-ray segmentation w
   - `python -m venv C:\Users\Max\code\xray_fracture_benchmark_venv`
   - `C:\Users\Max\code\xray_fracture_benchmark_venv\Scripts\Activate.ps1`
 - Install deps:
-  - `python -m pip install -r requirements.txt`
+  - `.\scripts\setup_env.ps1`
+- Download/prepare dataset:
+  - `python scripts/download_fracatlas.py`
+  - `python scripts/prepare_fracatlas_segmentation.py`
 - Local dataset guard:
   - `python scripts/check_no_dataset_files.py`

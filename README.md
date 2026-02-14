@@ -1,52 +1,45 @@
 # xray_fracture_benchmark
 
-LLM-driven experimentation for X-ray classification on a small open dataset.
+Local benchmark scaffold for fracture X-ray segmentation/classification experiments with strict reproducibility.
 
-## Dataset
+## Dataset (Step 1)
 
-This project uses `PneumoniaMNIST` from MedMNIST:
-- Modality: chest X-ray
-- Task: binary classification (normal vs pneumonia)
-- Size: small enough for quick CPU/GPU iteration
+Primary dataset: **FracAtlas** (public, CC BY 4.0).
+- 4,083 musculoskeletal X-rays
+- fractured / non-fractured labels
+- polygon annotations (VGG JSON) that can be rasterized to masks
+- canonical source: https://doi.org/10.6084/m9.figshare.22363012.v6
 
-## Setup
+## Quickstart
 
 ```powershell
-cd C:\Users\Max\code
+cd C:\Users\Max\code\xray_fracture_benchmark
 C:\Users\Max\code\xray_fracture_benchmark_venv\Scripts\Activate.ps1
-cd .\xray_fracture_benchmark
-python -m pip install -r requirements.txt
+.\scripts\setup_env.ps1
 ```
 
-## Prepare Data
+`setup_env.ps1` installs:
+- CUDA PyTorch (`cu128`)
+- base project dependencies
+- and runs a CUDA verification script
+
+## Download + Prepare Data
 
 ```powershell
-python .\scripts\prepare_pneumoniamnist.py --output-dir .\data\pneumoniamnist
+python .\scripts\download_fracatlas.py
+python .\scripts\prepare_fracatlas_segmentation.py
 ```
 
-## Run A Baseline Experiment
+Outputs:
+- raw archive and extraction under `data/raw/`
+- binary masks + manifests under `data/processed/fracatlas/`
+- deterministic split CSV files (`train.csv`, `val.csv`, `test.csv`)
 
-```powershell
-python .\scripts\run_llm_experiment.py `
-  --config .\configs\baseline.yaml `
-  --output-dir .\results\baseline_run `
-  --use-llm false
-```
+## Notes
 
-## Run LLM-Driven Experiment
-
-Set `OPENAI_API_KEY` and run:
-
-```powershell
-python .\scripts\run_llm_experiment.py `
-  --config .\configs\baseline.yaml `
-  --output-dir .\results\llm_run `
-  --use-llm true `
-  --llm-model gpt-5-mini
-```
-
-Artifacts saved per run:
-- `resolved_config.yaml`
-- `llm_response.txt` (when LLM is used)
-- `best_model.pt`
-- `metrics.json`
+- Dataset and artifacts are intentionally ignored by git.
+- A CI guard and pre-commit hook block accidental dataset commits.
+- Baseline training/evaluation scripts:
+  - `python .\scripts\train.py --config .\configs\fast_dev.yaml --output-dir .\runs\fast_dev`
+  - `python .\scripts\validate.py --config .\configs\fast_dev.yaml --checkpoint .\runs\fast_dev\best_model.pt --output .\runs\fast_dev\validate_metrics.json`
+  - `python .\scripts\test.py --config .\configs\fast_dev.yaml --checkpoint .\runs\fast_dev\best_model.pt --output .\runs\fast_dev\test_metrics.json`
