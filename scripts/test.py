@@ -5,7 +5,6 @@ import pathlib
 import sys
 
 import torch
-import torch.nn as nn
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
@@ -14,6 +13,7 @@ if str(SRC_DIR) not in sys.path:
 
 from benchmark.engine import (  # noqa: E402
     RuntimeContext,
+    build_criterion,
     build_dataloaders,
     build_model,
     resolve_device,
@@ -43,7 +43,7 @@ def main() -> int:
     model = build_model(config).to(device)
     model.load_state_dict(torch.load(checkpoint, map_location=device))
 
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = build_criterion(config)
     max_eval_batches = config.get("training", {}).get("max_eval_batches")
     max_eval_batches = int(max_eval_batches) if max_eval_batches is not None else None
     metrics = run_eval_epoch(model=model, loader=test_loader, criterion=criterion, runtime=runtime, max_batches=max_eval_batches)

@@ -11,10 +11,19 @@ training:
   epochs: 20
   learning_rate: 0.0003
   weight_decay: 0.0001
+  balanced_sampling: true
+  augment: true
+  selection_metric: dice_pos
+loss:
+  name: bce_dice
+  bce_weight: 0.3
+  dice_weight: 0.7
+  dice_positive_only: true
 model:
   name: simple_unet
   in_channels: 3
   out_channels: 1
+  base_channels: 32
 runtime:
   device: cuda
-  amp: false
+  amp: true

@@ -43,3 +43,4 @@ Outputs:
   - `python .\scripts\train.py --config .\configs\fast_dev.yaml --output-dir .\runs\fast_dev`
   - `python .\scripts\validate.py --config .\configs\fast_dev.yaml --checkpoint .\runs\fast_dev\best_model.pt --output .\runs\fast_dev\validate_metrics.json`
   - `python .\scripts\test.py --config .\configs\fast_dev.yaml --checkpoint .\runs\fast_dev\best_model.pt --output .\runs\fast_dev\test_metrics.json`
+- Primary model selection metric is `dice_pos` (fractured-only Dice), not all-sample Dice.

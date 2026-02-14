@@ -6,7 +6,6 @@ import platform
 import sys
 
 import torch
-import torch.nn as nn
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 SRC_DIR = REPO_ROOT / "src"
@@ -15,6 +14,7 @@ if str(SRC_DIR) not in sys.path:
 
 from benchmark.engine import (  # noqa: E402
     RuntimeContext,
+    build_criterion,
     build_dataloaders,
     build_model,
     resolve_device,
@@ -53,7 +53,8 @@ def main() -> int:
         lr=float(training_cfg.get("learning_rate", 3e-4)),
         weight_decay=float(training_cfg.get("weight_decay", 1e-4)),
     )
-    criterion = nn.BCEWithLogitsLoss()
+    criterion = build_criterion(config)
+    scaler = torch.amp.GradScaler(device.type, enabled=bool(runtime.amp and device.type == "cuda"))
 
     epochs = int(training_cfg.get("epochs", 20))
     max_train_batches = training_cfg.get("max_train_batches")
@@ -62,7 +63,8 @@ def main() -> int:
     max_eval_batches = int(max_eval_batches) if max_eval_batches is not None else None
 
     history = []
-    best_dice = -1.0
+    selection_metric = str(training_cfg.get("selection_metric", "dice_pos"))
+    best_score = -1.0
     best_epoch = -1
 
     for epoch in range(1, epochs + 1):
@@ -72,6 +74,7 @@ def main() -> int:
             optimizer=optimizer,
             criterion=criterion,
             runtime=runtime,
+            scaler=scaler,
             max_batches=max_train_batches,
         )
         val_metrics = run_eval_epoch(
@@ -84,15 +87,14 @@ def main() -> int:
         row = {
             "epoch": epoch,
             "train_loss": train_loss,
-            "val_loss": val_metrics["loss"],
-            "val_dice": val_metrics["dice"],
-            "val_iou": val_metrics["iou"],
+            **{f"val_{k}": v for k, v in val_metrics.items()},
         }
         history.append(row)
         print(row)
 
-        if val_metrics["dice"] > best_dice:
-            best_dice = val_metrics["dice"]
+        current_score = float(val_metrics.get(selection_metric, val_metrics.get("dice", 0.0)))
+        if current_score > best_score:
+            best_score = current_score
             best_epoch = epoch
             torch.save(model.state_dict(), output_dir / "best_model.pt")
 
@@ -113,8 +115,9 @@ def main() -> int:
     save_json(
         output_dir / "metrics.json",
         {
+            "selection_metric": selection_metric,
             "best_epoch": best_epoch,
-            "best_val_dice": best_dice,
+            "best_val_score": best_score,
             "history": history,
         },
     )
