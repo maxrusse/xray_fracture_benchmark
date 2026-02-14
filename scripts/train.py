@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train baseline segmentation model on FracAtlas.")
     parser.add_argument("--config", default="configs/baseline.yaml")
     parser.add_argument("--output-dir", default="runs/baseline")
+    parser.add_argument("--init-checkpoint", default=None)
     return parser.parse_args()
 
 
@@ -46,6 +47,15 @@ def main() -> int:
 
     train_loader, val_loader, _ = build_dataloaders(config, REPO_ROOT)
     model = build_model(config).to(device)
+    if args.init_checkpoint:
+        init_path = (REPO_ROOT / args.init_checkpoint).resolve()
+        state = torch.load(init_path, map_location=device)
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        print(f"loaded init checkpoint: {init_path}")
+        if missing:
+            print(f"missing keys ({len(missing)}): {missing[:8]}")
+        if unexpected:
+            print(f"unexpected keys ({len(unexpected)}): {unexpected[:8]}")
 
     training_cfg = config["training"]
     optimizer = torch.optim.AdamW(

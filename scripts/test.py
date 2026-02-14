@@ -27,6 +27,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="configs/baseline.yaml")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--output", default="runs/test_metrics.json")
+    parser.add_argument("--threshold", type=float, default=None, help="Override binarization threshold for metrics.")
+    parser.add_argument("--tta", default=None, help="TTA mode: none, h, v, hv.")
     return parser.parse_args()
 
 
@@ -44,9 +46,22 @@ def main() -> int:
     model.load_state_dict(torch.load(checkpoint, map_location=device))
 
     criterion = build_criterion(config)
+    eval_cfg = config.get("evaluation", {})
+    threshold = float(args.threshold) if args.threshold is not None else float(eval_cfg.get("threshold", 0.5))
+    tta_mode = str(args.tta) if args.tta is not None else str(eval_cfg.get("tta", "none"))
     max_eval_batches = config.get("training", {}).get("max_eval_batches")
     max_eval_batches = int(max_eval_batches) if max_eval_batches is not None else None
-    metrics = run_eval_epoch(model=model, loader=test_loader, criterion=criterion, runtime=runtime, max_batches=max_eval_batches)
+    metrics = run_eval_epoch(
+        model=model,
+        loader=test_loader,
+        criterion=criterion,
+        runtime=runtime,
+        max_batches=max_eval_batches,
+        threshold=threshold,
+        tta_mode=tta_mode,
+    )
+    metrics["threshold"] = threshold
+    metrics["tta_mode"] = tta_mode
     save_json(output, metrics)
     print(metrics)
     return 0

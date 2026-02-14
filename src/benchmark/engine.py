@@ -35,7 +35,12 @@ def build_model(config: dict[str, Any]) -> nn.Module:
 def build_dataloaders(config: dict[str, Any], repo_root: pathlib.Path) -> tuple[DataLoader, DataLoader, DataLoader]:
     dataset_cfg = config["dataset"]
     training_cfg = config["training"]
-    image_size = int(config["input"]["image_size"])
+    input_cfg = config["input"]
+    image_size = int(input_cfg["image_size"])
+    preserve_aspect = bool(input_cfg.get("preserve_aspect", False))
+    patch_cfg = training_cfg.get("patch", {})
+    patch_enabled = bool(patch_cfg.get("enabled", False))
+    patch_size = int(patch_cfg.get("size", image_size)) if patch_enabled else None
     manifest_path = (repo_root / dataset_cfg["manifest"]).resolve()
 
     train_ds = FracAtlasSegDataset(
@@ -44,9 +49,26 @@ def build_dataloaders(config: dict[str, Any], repo_root: pathlib.Path) -> tuple[
         image_size=image_size,
         base_dir=repo_root,
         augment=bool(training_cfg.get("augment", False)),
+        preserve_aspect=preserve_aspect,
+        patch_size=patch_size,
+        positive_patch_prob=float(patch_cfg.get("positive_prob", 0.7)),
+        hard_negative_prob=float(patch_cfg.get("hard_negative_prob", 0.6)),
+        hard_negative_quantile=float(patch_cfg.get("hard_negative_quantile", 0.90)),
     )
-    val_ds = FracAtlasSegDataset(manifest_path=manifest_path, split="val", image_size=image_size, base_dir=repo_root)
-    test_ds = FracAtlasSegDataset(manifest_path=manifest_path, split="test", image_size=image_size, base_dir=repo_root)
+    val_ds = FracAtlasSegDataset(
+        manifest_path=manifest_path,
+        split="val",
+        image_size=image_size,
+        base_dir=repo_root,
+        preserve_aspect=preserve_aspect,
+    )
+    test_ds = FracAtlasSegDataset(
+        manifest_path=manifest_path,
+        split="test",
+        image_size=image_size,
+        base_dir=repo_root,
+        preserve_aspect=preserve_aspect,
+    )
 
     batch_size = int(training_cfg.get("batch_size", 4))
     num_workers = int(training_cfg.get("num_workers", 0))
@@ -92,6 +114,42 @@ def _extract_logits(output: torch.Tensor | dict[str, torch.Tensor]) -> torch.Ten
             raise ValueError("Model output dict is missing 'out' key.")
         return output["out"]
     return output
+
+
+def _forward_logits(model: nn.Module, images: torch.Tensor) -> torch.Tensor:
+    output = model(images)
+    return _extract_logits(output)
+
+
+def _normalize_tta_mode(tta_mode: str) -> str:
+    mode = str(tta_mode).lower().strip()
+    if mode in {"", "none"}:
+        return "none"
+    valid = {"h", "v"}
+    selected = "".join(ch for ch in mode if ch in valid)
+    if not selected:
+        return "none"
+    if "h" in selected and "v" in selected:
+        return "hv"
+    return "h" if "h" in selected else "v"
+
+
+def _predict_logits(model: nn.Module, images: torch.Tensor, tta_mode: str = "none") -> torch.Tensor:
+    mode = _normalize_tta_mode(tta_mode)
+    if mode == "none":
+        return _forward_logits(model, images)
+
+    probs: list[torch.Tensor] = [torch.sigmoid(_forward_logits(model, images))]
+    if "h" in mode:
+        logits_h = _forward_logits(model, torch.flip(images, dims=[3]))
+        probs.append(torch.flip(torch.sigmoid(logits_h), dims=[3]))
+    if "v" in mode:
+        logits_v = _forward_logits(model, torch.flip(images, dims=[2]))
+        probs.append(torch.flip(torch.sigmoid(logits_v), dims=[2]))
+
+    mean_prob = torch.stack(probs, dim=0).mean(dim=0)
+    mean_prob = mean_prob.clamp(min=1e-6, max=1.0 - 1e-6)
+    return torch.logit(mean_prob)
 
 
 def _align_logits_to_target(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -150,6 +208,8 @@ def run_eval_epoch(
     criterion: nn.Module,
     runtime: RuntimeContext,
     max_batches: int | None = None,
+    threshold: float = 0.5,
+    tta_mode: str = "none",
 ) -> dict[str, float]:
     model.eval()
     loss_sum = 0.0
@@ -174,14 +234,13 @@ def run_eval_epoch(
             images, masks = _to_device(batch, runtime.device)
             use_amp = runtime.amp and runtime.device.type == "cuda"
             with torch.autocast(device_type=runtime.device.type, enabled=use_amp):
-                output = model(images)
-                logits = _extract_logits(output)
+                logits = _predict_logits(model, images, tta_mode=tta_mode)
                 logits = _align_logits_to_target(logits, masks)
                 loss = criterion(logits, masks)
             loss_sum += float(loss.item())
             count += 1
 
-            stats = summarize_segmentation_metrics(logits, masks)
+            stats = summarize_segmentation_metrics(logits, masks, threshold=threshold)
             batch_total = float(stats["num_total"].item())
             batch_pos = float(stats["num_pos"].item())
             batch_neg = batch_total - batch_pos

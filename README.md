@@ -47,3 +47,14 @@ Outputs:
 - Stronger model track (DeepLabV3-ResNet50):
   - Fast check: `python .\scripts\train.py --config .\configs\deeplabv3_fast.yaml --output-dir .\runs\deeplab_fast`
   - Full run: `python .\scripts\train.py --config .\configs\deeplabv3_resnet50.yaml --output-dir .\runs\deeplab_full`
+- Challenge track (aspect-preserving + patch sampling + hard negatives):
+  - Fast check: `python .\scripts\train.py --config .\configs\challenge_patch_hardneg_fast.yaml --output-dir .\runs\challenge_fast`
+  - Full run: `python .\scripts\train.py --config .\configs\challenge_patch_hardneg.yaml --output-dir .\runs\challenge_full`
+  - Warm-start finetune: `python .\scripts\train.py --config .\configs\challenge_patch_hardneg_finetune.yaml --output-dir .\runs\challenge_finetune_v1 --init-checkpoint .\runs\deeplab_full\best_model.pt`
+- Inference-time optimization track:
+  - Tune threshold on validation with TTA: `python .\scripts\tune_threshold.py --config .\configs\deeplabv3_resnet50.yaml --checkpoint .\runs\deeplab_full\best_model.pt --tta hv --output .\runs\deeplab_full\threshold_tuning_hv.json --start 0.05 --stop 0.50 --step 0.05`
+  - Validate with tuned settings: `python .\scripts\validate.py --config .\configs\deeplabv3_resnet50.yaml --checkpoint .\runs\deeplab_full\best_model.pt --tta hv --threshold 0.25 --output .\runs\deeplab_full\validate_metrics_tta_hv_thr025.json`
+  - Test with tuned settings: `python .\scripts\test.py --config .\configs\deeplabv3_resnet50.yaml --checkpoint .\runs\deeplab_full\best_model.pt --tta hv --threshold 0.25 --output .\runs\deeplab_full\test_metrics_tta_hv_thr025.json`
+- Latest local reference numbers:
+  - `runs/deeplab_full/test_metrics.json`: `dice_pos=0.35627` (baseline, threshold `0.5`, no TTA)
+  - `runs/deeplab_full/test_metrics_tta_hv_thr025.json`: `dice_pos=0.36710` (tuned threshold + TTA)

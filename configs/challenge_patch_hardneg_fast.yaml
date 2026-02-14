@@ -1,0 +1,39 @@
+seed: 42
+task: segmentation
+dataset:
+  name: fracatlas
+  manifest: data/processed/fracatlas/manifests/all.csv
+input:
+  image_size: 512
+  preserve_aspect: true
+training:
+  batch_size: 2
+  num_workers: 0
+  epochs: 8
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  balanced_sampling: true
+  augment: true
+  selection_metric: dice_pos
+  scheduler: none
+  max_train_batches: 120
+  max_eval_batches: 60
+  patch:
+    enabled: true
+    size: 256
+    positive_prob: 0.95
+    hard_negative_prob: 0.50
+    hard_negative_quantile: 0.92
+loss:
+  name: bce_dice
+  bce_weight: 0.2
+  dice_weight: 0.8
+  dice_positive_only: true
+model:
+  name: deeplabv3_resnet50
+  out_channels: 1
+  pretrained: false
+  pretrained_backbone: false
+runtime:
+  device: cuda
+  amp: true
