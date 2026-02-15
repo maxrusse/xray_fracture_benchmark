@@ -29,6 +29,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default="runs/validate_metrics.json")
     parser.add_argument("--threshold", type=float, default=None, help="Override binarization threshold for metrics.")
     parser.add_argument("--tta", default=None, help="TTA mode: none, h, v, hv.")
+    parser.add_argument("--presence-score-mode", default=None, help="Image-level presence score: max, mean, topk_mean, pred_area.")
+    parser.add_argument("--presence-topk-frac", type=float, default=None, help="Top-k fraction for presence-score-mode=topk_mean.")
+    parser.add_argument("--presence-threshold", type=float, default=None, help="Binary threshold over image-level presence score.")
     return parser.parse_args()
 
 
@@ -49,6 +52,21 @@ def main() -> int:
     eval_cfg = config.get("evaluation", {})
     threshold = float(args.threshold) if args.threshold is not None else float(eval_cfg.get("threshold", 0.5))
     tta_mode = str(args.tta) if args.tta is not None else str(eval_cfg.get("tta", "none"))
+    presence_score_mode = (
+        str(args.presence_score_mode)
+        if args.presence_score_mode is not None
+        else str(eval_cfg.get("presence_score_mode", "max"))
+    )
+    presence_topk_frac = (
+        float(args.presence_topk_frac)
+        if args.presence_topk_frac is not None
+        else float(eval_cfg.get("presence_topk_frac", 0.01))
+    )
+    presence_threshold = (
+        float(args.presence_threshold)
+        if args.presence_threshold is not None
+        else float(eval_cfg.get("presence_threshold", 0.5))
+    )
     max_eval_batches = config.get("training", {}).get("max_eval_batches")
     max_eval_batches = int(max_eval_batches) if max_eval_batches is not None else None
     metrics = run_eval_epoch(
@@ -59,6 +77,9 @@ def main() -> int:
         max_batches=max_eval_batches,
         threshold=threshold,
         tta_mode=tta_mode,
+        presence_score_mode=presence_score_mode,
+        presence_topk_frac=presence_topk_frac,
+        presence_threshold=presence_threshold,
     )
     metrics["threshold"] = threshold
     metrics["tta_mode"] = tta_mode

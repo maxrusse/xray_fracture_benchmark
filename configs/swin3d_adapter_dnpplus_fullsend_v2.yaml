@@ -1,0 +1,90 @@
+seed: 42
+task: segmentation
+dataset:
+  name: fracatlas
+  manifest: data/processed/fracatlas/manifests/all.csv
+input:
+  image_size: 160
+  preserve_aspect: false
+training:
+  batch_size: 8
+  num_workers: 0
+  epochs: 18
+  optimizer: adamw
+  learning_rate: 0.00012
+  min_lr: 0.000002
+  weight_decay: 0.0002
+  beta1: 0.9
+  beta2: 0.99
+  eps: 0.00000001
+  balanced_sampling: true
+  augment: true
+  selection_metric: dice_pos
+  scheduler: cosine
+  grad_clip_norm: 1.0
+  ema:
+    enabled: true
+    decay: 0.999
+    warmup_steps: 150
+  patch:
+    enabled: true
+    size: 320
+    positive_prob: 0.90
+    hard_negative_prob: 0.65
+    hard_negative_quantile: 0.93
+  augmentation:
+    jitter_prob: 0.80
+    brightness: 0.25
+    contrast: 0.25
+    gamma_prob: 0.50
+    gamma_min: 0.70
+    gamma_max: 1.50
+    autocontrast_prob: 0.20
+    blur_prob: 0.35
+    blur_kernel: 5
+    blur_sigma_min: 0.10
+    blur_sigma_max: 1.80
+    noise_prob: 0.35
+    noise_std_min: 0.00
+    noise_std_max: 0.045
+    cutout_prob: 0.25
+    cutout_frac_min: 0.05
+    cutout_frac_max: 0.18
+loss:
+  name: focal_dice_tversky
+  focal_weight: 0.45
+  dice_weight: 0.35
+  tversky_weight: 0.20
+  focal_gamma: 2.0
+  focal_alpha: 0.75
+  pos_weight: 3.0
+  dice_positive_only: true
+  tversky_alpha: 0.25
+  tversky_beta: 0.75
+  tversky_gamma: 1.2
+  presence_bce_weight: 0.15
+  presence_bce_warmup_epochs: 4
+model:
+  name: swin3d_adapter
+  in_channels: 1
+  out_channels: 1
+  context_channels: 16
+  pseudo_depth: 5
+  depth_reduce: max
+  pseudo_mode: dnp_plus
+  use_depth_bias: true
+runtime:
+  device: cuda
+  amp: true
+evaluation:
+  threshold: 0.4
+  tta: none
+threshold_tuning:
+  enabled: true
+  metric: dice_pos
+  tta: hv
+  start: 0.10
+  stop: 0.60
+  step: 0.05
+final_eval:
+  use_full_eval: true

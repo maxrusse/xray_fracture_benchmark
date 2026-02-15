@@ -1,0 +1,90 @@
+seed: 42
+task: segmentation
+dataset:
+  name: fracatlas
+  manifest: data/processed/fracatlas/manifests/all.csv
+input:
+  image_size: 512
+  preserve_aspect: true
+training:
+  batch_size: 2
+  num_workers: 0
+  epochs: 18
+  learning_rate: 0.00003
+  max_lr: 0.0002
+  min_lr: 0.000001
+  weight_decay: 0.0001
+  optimizer: adamw
+  betas: [0.9, 0.999]
+  eps: 0.00000001
+  scheduler: onecycle
+  pct_start: 0.15
+  div_factor: 10.0
+  final_div_factor: 1000.0
+  grad_clip_norm: 1.0
+  balanced_sampling: true
+  augment: true
+  selection_metric: dice_pos
+  ema:
+    enabled: true
+    decay: 0.997
+  patch:
+    enabled: true
+    size: 320
+    positive_prob: 0.95
+    hard_negative_prob: 0.55
+    hard_negative_quantile: 0.92
+  augmentation:
+    positive_aug_multiplier: 1.20
+    affine_prob: 0.40
+    affine_max_degrees: 10.0
+    affine_translate_frac: 0.06
+    affine_scale_min: 0.88
+    affine_scale_max: 1.12
+    jitter_prob: 0.75
+    brightness: 0.30
+    contrast: 0.30
+    gamma_prob: 0.55
+    gamma_min: 0.70
+    gamma_max: 1.45
+    autocontrast_prob: 0.20
+    blur_prob: 0.20
+    blur_kernel: 5
+    blur_sigma_min: 0.1
+    blur_sigma_max: 1.5
+    noise_prob: 0.35
+    noise_std_min: 0.0
+    noise_std_max: 0.06
+    cutout_prob: 0.25
+    cutout_frac_min: 0.08
+    cutout_frac_max: 0.20
+loss:
+  name: focal_dice_tversky
+  focal_weight: 0.35
+  dice_weight: 0.35
+  tversky_weight: 0.30
+  focal_gamma: 2.0
+  focal_alpha: 0.75
+  pos_weight: 4.5
+  dice_positive_only: true
+  tversky_alpha: 0.30
+  tversky_beta: 0.70
+  tversky_gamma: 1.0
+  presence_bce_weight: 0.30
+  presence_bce_warmup_epochs: 5
+evaluation:
+  threshold: 0.5
+  tta: none
+  presence_score_mode: cls
+  presence_topk_frac: 0.01
+  presence_threshold: 0.5
+model:
+  name: deeplabv3_resnet101_dual_head
+  out_channels: 1
+  pretrained: false
+  pretrained_backbone: false
+  cls_hidden: 256
+  cls_dropout: 0.2
+runtime:
+  device: cuda
+  amp: true

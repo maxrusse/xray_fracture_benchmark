@@ -1,0 +1,46 @@
+seed: 42
+task: segmentation
+dataset:
+  name: fracatlas
+  manifest: data/processed/fracatlas/manifests/all.csv
+input:
+  image_size: 128
+  preserve_aspect: false
+training:
+  batch_size: 8
+  num_workers: 0
+  epochs: 20
+  learning_rate: 0.0003
+  weight_decay: 0.0001
+  balanced_sampling: true
+  augment: true
+  selection_metric: dice_pos
+loss:
+  name: bce_dice
+  bce_weight: 0.3
+  dice_weight: 0.7
+  dice_positive_only: true
+model:
+  name: swin3d_adapter
+  in_channels: 1
+  out_channels: 1
+  context_channels: 16
+  pseudo_depth: 5
+  depth_reduce: mean
+  pseudo_mode: dnp_plus
+  use_depth_bias: true
+runtime:
+  device: cuda
+  amp: true
+evaluation:
+  threshold: 0.5
+  tta: none
+threshold_tuning:
+  enabled: true
+  metric: dice_pos
+  tta: hv
+  start: 0.10
+  stop: 0.50
+  step: 0.05
+final_eval:
+  use_full_eval: true

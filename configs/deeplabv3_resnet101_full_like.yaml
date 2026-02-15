@@ -1,0 +1,34 @@
+seed: 42
+task: segmentation
+dataset:
+  name: fracatlas
+  manifest: data/processed/fracatlas/manifests/all.csv
+input:
+  image_size: 384
+training:
+  batch_size: 4
+  num_workers: 0
+  epochs: 20
+  learning_rate: 0.0001
+  weight_decay: 0.0001
+  balanced_sampling: true
+  augment: true
+  selection_metric: dice_pos
+  scheduler: cosine
+  min_lr: 0.000001
+loss:
+  name: bce_dice
+  bce_weight: 0.3
+  dice_weight: 0.7
+  dice_positive_only: true
+model:
+  name: deeplabv3_resnet101
+  out_channels: 1
+  pretrained: false
+  pretrained_backbone: false
+runtime:
+  device: cuda
+  amp: true
+evaluation:
+  threshold: 0.5
+  tta: none

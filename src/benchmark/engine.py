@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import dataclasses
 import pathlib
-from typing import Any
+from typing import Any, Callable
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -39,6 +40,7 @@ def build_dataloaders(config: dict[str, Any], repo_root: pathlib.Path) -> tuple[
     image_size = int(input_cfg["image_size"])
     preserve_aspect = bool(input_cfg.get("preserve_aspect", False))
     patch_cfg = training_cfg.get("patch", {})
+    augmentation_cfg = training_cfg.get("augmentation", {})
     patch_enabled = bool(patch_cfg.get("enabled", False))
     patch_size = int(patch_cfg.get("size", image_size)) if patch_enabled else None
     manifest_path = (repo_root / dataset_cfg["manifest"]).resolve()
@@ -54,6 +56,7 @@ def build_dataloaders(config: dict[str, Any], repo_root: pathlib.Path) -> tuple[
         positive_patch_prob=float(patch_cfg.get("positive_prob", 0.7)),
         hard_negative_prob=float(patch_cfg.get("hard_negative_prob", 0.6)),
         hard_negative_quantile=float(patch_cfg.get("hard_negative_quantile", 0.90)),
+        augmentation_cfg=augmentation_cfg,
     )
     val_ds = FracAtlasSegDataset(
         manifest_path=manifest_path,
@@ -116,9 +119,31 @@ def _extract_logits(output: torch.Tensor | dict[str, torch.Tensor]) -> torch.Ten
     return output
 
 
-def _forward_logits(model: nn.Module, images: torch.Tensor) -> torch.Tensor:
+def _extract_cls_logits(output: torch.Tensor | dict[str, torch.Tensor]) -> torch.Tensor | None:
+    if not isinstance(output, dict):
+        return None
+    if "cls" in output:
+        cls = output["cls"]
+    elif "classification" in output:
+        cls = output["classification"]
+    else:
+        return None
+
+    if cls.dim() == 2 and cls.shape[1] == 1:
+        cls = cls[:, 0]
+    elif cls.dim() != 1:
+        raise ValueError(f"Unsupported cls logits shape: {tuple(cls.shape)}")
+    return cls
+
+
+def _forward_outputs(model: nn.Module, images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor | None]:
     output = model(images)
-    return _extract_logits(output)
+    return _extract_logits(output), _extract_cls_logits(output)
+
+
+def _forward_logits(model: nn.Module, images: torch.Tensor) -> torch.Tensor:
+    logits, _ = _forward_outputs(model, images)
+    return logits
 
 
 def _normalize_tta_mode(tta_mode: str) -> str:
@@ -135,27 +160,132 @@ def _normalize_tta_mode(tta_mode: str) -> str:
 
 
 def _predict_logits(model: nn.Module, images: torch.Tensor, tta_mode: str = "none") -> torch.Tensor:
+    logits, _ = _predict_outputs(model, images, tta_mode=tta_mode)
+    return logits
+
+
+def _predict_outputs(
+    model: nn.Module,
+    images: torch.Tensor,
+    tta_mode: str = "none",
+) -> tuple[torch.Tensor, torch.Tensor | None]:
     mode = _normalize_tta_mode(tta_mode)
     if mode == "none":
-        return _forward_logits(model, images)
+        return _forward_outputs(model, images)
 
-    probs: list[torch.Tensor] = [torch.sigmoid(_forward_logits(model, images))]
+    logits_base, cls_base = _forward_outputs(model, images)
+    probs: list[torch.Tensor] = [torch.nan_to_num(torch.sigmoid(logits_base), nan=0.5, posinf=1.0, neginf=0.0)]
+    cls_probs: list[torch.Tensor] | None = (
+        [torch.nan_to_num(torch.sigmoid(cls_base), nan=0.5, posinf=1.0, neginf=0.0)] if cls_base is not None else None
+    )
     if "h" in mode:
-        logits_h = _forward_logits(model, torch.flip(images, dims=[3]))
-        probs.append(torch.flip(torch.sigmoid(logits_h), dims=[3]))
+        logits_h, cls_h = _forward_outputs(model, torch.flip(images, dims=[3]))
+        probs.append(torch.nan_to_num(torch.flip(torch.sigmoid(logits_h), dims=[3]), nan=0.5, posinf=1.0, neginf=0.0))
+        if cls_probs is not None and cls_h is not None:
+            cls_probs.append(torch.nan_to_num(torch.sigmoid(cls_h), nan=0.5, posinf=1.0, neginf=0.0))
     if "v" in mode:
-        logits_v = _forward_logits(model, torch.flip(images, dims=[2]))
-        probs.append(torch.flip(torch.sigmoid(logits_v), dims=[2]))
+        logits_v, cls_v = _forward_outputs(model, torch.flip(images, dims=[2]))
+        probs.append(torch.nan_to_num(torch.flip(torch.sigmoid(logits_v), dims=[2]), nan=0.5, posinf=1.0, neginf=0.0))
+        if cls_probs is not None and cls_v is not None:
+            cls_probs.append(torch.nan_to_num(torch.sigmoid(cls_v), nan=0.5, posinf=1.0, neginf=0.0))
 
-    mean_prob = torch.stack(probs, dim=0).mean(dim=0)
-    mean_prob = mean_prob.clamp(min=1e-6, max=1.0 - 1e-6)
-    return torch.logit(mean_prob)
+    mean_prob = torch.stack(probs, dim=0).mean(dim=0).float()
+    mean_prob = mean_prob.clamp(min=1e-4, max=1.0 - 1e-4)
+    seg_logits = torch.logit(mean_prob)
+
+    cls_logits: torch.Tensor | None = None
+    if cls_probs:
+        mean_cls_prob = torch.stack(cls_probs, dim=0).mean(dim=0).float().clamp(min=1e-4, max=1.0 - 1e-4)
+        cls_logits = torch.logit(mean_cls_prob)
+
+    return seg_logits, cls_logits
 
 
 def _align_logits_to_target(logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
     if logits.shape[-2:] != targets.shape[-2:]:
         logits = F.interpolate(logits, size=targets.shape[-2:], mode="bilinear", align_corners=False)
     return logits
+
+
+def _presence_score_from_probs(
+    probs: torch.Tensor, mode: str, topk_frac: float, pred_threshold: float
+) -> torch.Tensor:
+    flat = probs.view(probs.shape[0], -1)
+    score_mode = str(mode).lower().strip()
+    if score_mode == "max":
+        return flat.max(dim=1).values
+    if score_mode == "mean":
+        return flat.mean(dim=1)
+    if score_mode == "pred_area":
+        return (flat >= pred_threshold).float().mean(dim=1)
+    if score_mode != "topk_mean":
+        raise ValueError(f"Unsupported presence score mode: {mode}")
+    if not (0.0 < topk_frac <= 1.0):
+        raise ValueError("presence_topk_frac must be in (0,1].")
+    k = max(1, int(round(flat.shape[1] * float(topk_frac))))
+    return flat.topk(k=k, dim=1).values.mean(dim=1)
+
+
+def _binary_roc_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    y_true = y_true.astype(np.int64)
+    y_score = y_score.astype(np.float64)
+    n_pos = int((y_true == 1).sum())
+    n_neg = int((y_true == 0).sum())
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+
+    order = np.argsort(y_score, kind="mergesort")
+    ranks = np.empty_like(order, dtype=np.float64)
+    i = 0
+    n = len(order)
+    while i < n:
+        j = i
+        score_i = y_score[order[i]]
+        while j + 1 < n and y_score[order[j + 1]] == score_i:
+            j += 1
+        avg_rank = 0.5 * (i + j) + 1.0
+        ranks[order[i : j + 1]] = avg_rank
+        i = j + 1
+
+    sum_pos = ranks[y_true == 1].sum()
+    auc = (sum_pos - (n_pos * (n_pos + 1) / 2.0)) / (n_pos * n_neg)
+    return float(auc)
+
+
+def _average_precision(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    y_true = y_true.astype(np.int64)
+    y_score = y_score.astype(np.float64)
+    n_pos = int((y_true == 1).sum())
+    if n_pos == 0:
+        return float("nan")
+
+    order = np.argsort(-y_score, kind="mergesort")
+    y_sorted = y_true[order]
+    tp = np.cumsum(y_sorted == 1)
+    fp = np.cumsum(y_sorted == 0)
+    precision = tp / np.maximum(tp + fp, 1)
+    ap = precision[y_sorted == 1].sum() / n_pos
+    return float(ap)
+
+
+def _best_f1_threshold(y_true: np.ndarray, y_score: np.ndarray) -> tuple[float, float]:
+    thresholds = np.unique(y_score.astype(np.float64))
+    if thresholds.size == 0:
+        return 0.0, 0.5
+    best_f1 = -1.0
+    best_thr = float(thresholds[0])
+    for thr in thresholds:
+        pred = (y_score >= thr).astype(np.int64)
+        tp = int(np.logical_and(pred == 1, y_true == 1).sum())
+        fp = int(np.logical_and(pred == 1, y_true == 0).sum())
+        fn = int(np.logical_and(pred == 0, y_true == 1).sum())
+        precision = tp / max(tp + fp, 1)
+        recall = tp / max(tp + fn, 1)
+        f1 = 2.0 * precision * recall / max(precision + recall, 1e-12)
+        if f1 > best_f1:
+            best_f1 = f1
+            best_thr = float(thr)
+    return float(best_f1), float(best_thr)
 
 
 def build_criterion(config: dict[str, Any]) -> nn.Module:
@@ -169,11 +299,17 @@ def run_train_epoch(
     criterion: nn.Module,
     runtime: RuntimeContext,
     scaler: torch.cuda.amp.GradScaler | None = None,
+    scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
+    scheduler_step_per_batch: bool = False,
     max_batches: int | None = None,
+    presence_bce_weight: float = 0.0,
+    grad_clip_norm: float | None = None,
+    update_ema_fn: Callable[[nn.Module], None] | None = None,
 ) -> float:
     model.train()
     loss_sum = 0.0
     count = 0
+    presence_bce = nn.BCEWithLogitsLoss() if float(presence_bce_weight) > 0.0 else None
 
     for step, batch in enumerate(tqdm(loader, desc="train", leave=False), start=1):
         if max_batches is not None and step > max_batches:
@@ -186,15 +322,38 @@ def run_train_epoch(
         with torch.autocast(device_type=runtime.device.type, enabled=use_amp):
             output = model(images)
             logits = _extract_logits(output)
+            cls_logits = _extract_cls_logits(output)
             logits = _align_logits_to_target(logits, masks)
-            loss = criterion(logits, masks)
+        loss = criterion(logits.float(), masks.float())
+        if torch.isnan(loss):
+            continue
+        if presence_bce is not None:
+            presence_logits = cls_logits if cls_logits is not None else logits.amax(dim=(2, 3)).squeeze(1)
+            presence_targets = (masks.view(masks.shape[0], -1).sum(dim=1) > 0).float()
+            presence_loss = presence_bce(presence_logits.float(), presence_targets.float())
+            if not torch.isnan(presence_loss):
+                loss = loss + float(presence_bce_weight) * presence_loss
+        stepped = False
         if scaler is not None and use_amp:
             scaler.scale(loss).backward()
+            if grad_clip_norm is not None and grad_clip_norm > 0:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), float(grad_clip_norm))
+            scale_before = float(scaler.get_scale())
             scaler.step(optimizer)
             scaler.update()
+            scale_after = float(scaler.get_scale())
+            stepped = scale_after >= scale_before
         else:
             loss.backward()
+            if grad_clip_norm is not None and grad_clip_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), float(grad_clip_norm))
             optimizer.step()
+            stepped = True
+        if scheduler is not None and scheduler_step_per_batch and stepped:
+            scheduler.step()
+        if update_ema_fn is not None and stepped:
+            update_ema_fn(model)
 
         loss_sum += float(loss.item())
         count += 1
@@ -210,6 +369,9 @@ def run_eval_epoch(
     max_batches: int | None = None,
     threshold: float = 0.5,
     tta_mode: str = "none",
+    presence_score_mode: str = "max",
+    presence_topk_frac: float = 0.01,
+    presence_threshold: float = 0.5,
 ) -> dict[str, float]:
     model.eval()
     loss_sum = 0.0
@@ -226,6 +388,9 @@ def run_eval_epoch(
     tp = 0.0
     fp = 0.0
     fn = 0.0
+    y_true_presence: list[np.ndarray] = []
+    y_score_presence: list[np.ndarray] = []
+    presence_source = "segmentation"
     with torch.no_grad():
         for step, batch in enumerate(tqdm(loader, desc="eval", leave=False), start=1):
             if max_batches is not None and step > max_batches:
@@ -234,16 +399,16 @@ def run_eval_epoch(
             images, masks = _to_device(batch, runtime.device)
             use_amp = runtime.amp and runtime.device.type == "cuda"
             with torch.autocast(device_type=runtime.device.type, enabled=use_amp):
-                logits = _predict_logits(model, images, tta_mode=tta_mode)
+                logits, cls_logits = _predict_outputs(model, images, tta_mode=tta_mode)
                 logits = _align_logits_to_target(logits, masks)
-                loss = criterion(logits, masks)
-            loss_sum += float(loss.item())
-            count += 1
+            loss = criterion(logits.float(), masks.float())
+            if not torch.isnan(loss):
+                loss_sum += float(loss.item())
+                count += 1
 
             stats = summarize_segmentation_metrics(logits, masks, threshold=threshold)
             batch_total = float(stats["num_total"].item())
             batch_pos = float(stats["num_pos"].item())
-            batch_neg = batch_total - batch_pos
 
             sum_dice += float(stats["dice"].item()) * batch_total
             sum_iou += float(stats["iou"].item()) * batch_total
@@ -259,8 +424,39 @@ def run_eval_epoch(
             fp += float(stats["fp"].item())
             fn += float(stats["fn"].item())
 
+            labels = (masks.view(masks.shape[0], -1).sum(dim=1) > 0).long()
+            mode = str(presence_score_mode).lower().strip()
+            if cls_logits is not None and mode in {"cls", "auto"}:
+                scores = torch.sigmoid(cls_logits)
+                presence_source = "cls"
+            else:
+                if mode == "cls":
+                    mode = "max"
+                probs = torch.sigmoid(logits)
+                scores = _presence_score_from_probs(
+                    probs=probs,
+                    mode=mode,
+                    topk_frac=presence_topk_frac,
+                    pred_threshold=threshold,
+                )
+                presence_source = "segmentation"
+            y_true_presence.append(labels.detach().cpu().numpy())
+            y_score_presence.append(scores.detach().cpu().numpy())
+
     precision_pos = tp / (tp + fp + 1e-6)
     recall_pos = tp / (tp + fn + 1e-6)
+    y_true_np = np.concatenate(y_true_presence, axis=0) if y_true_presence else np.array([], dtype=np.int64)
+    y_score_np = np.concatenate(y_score_presence, axis=0) if y_score_presence else np.array([], dtype=np.float64)
+    roc_auc_presence = _binary_roc_auc(y_true_np, y_score_np) if y_true_np.size else float("nan")
+    average_precision_presence = _average_precision(y_true_np, y_score_np) if y_true_np.size else float("nan")
+    best_f1_presence, best_f1_threshold_presence = _best_f1_threshold(y_true_np, y_score_np) if y_true_np.size else (float("nan"), float("nan"))
+
+    pred_presence = (y_score_np >= float(presence_threshold)).astype(np.int64) if y_true_np.size else np.array([], dtype=np.int64)
+    tp_presence = float(np.logical_and(pred_presence == 1, y_true_np == 1).sum()) if y_true_np.size else 0.0
+    fp_presence = float(np.logical_and(pred_presence == 1, y_true_np == 0).sum()) if y_true_np.size else 0.0
+    fn_presence = float(np.logical_and(pred_presence == 0, y_true_np == 1).sum()) if y_true_np.size else 0.0
+    precision_presence = tp_presence / (tp_presence + fp_presence + 1e-6)
+    recall_presence = tp_presence / (tp_presence + fn_presence + 1e-6)
     return {
         "loss": loss_sum / max(count, 1),
         "dice": float(sum_dice / max(count_samples, 1.0)),
@@ -272,4 +468,15 @@ def run_eval_epoch(
         "recall_pos": float(recall_pos),
         "num_samples": float(count_samples),
         "num_positive": float(count_pos),
+        "num_negative": float(count_samples - count_pos),
+        "roc_auc_presence": float(roc_auc_presence),
+        "average_precision_presence": float(average_precision_presence),
+        "best_f1_presence": float(best_f1_presence),
+        "best_f1_threshold_presence": float(best_f1_threshold_presence),
+        "precision_presence": float(precision_presence),
+        "recall_presence": float(recall_presence),
+        "presence_score_mode": str(presence_score_mode),
+        "presence_score_source": str(presence_source),
+        "presence_topk_frac": float(presence_topk_frac),
+        "presence_threshold": float(presence_threshold),
     }

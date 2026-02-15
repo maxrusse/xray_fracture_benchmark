@@ -1,0 +1,41 @@
+seed: 42
+task: segmentation
+dataset:
+  name: fracatlas
+  manifest: data/processed/fracatlas/manifests/all.csv
+input:
+  image_size: 256
+training:
+  batch_size: 4
+  num_workers: 0
+  epochs: 12
+  learning_rate: 0.0001
+  min_lr: 0.000001
+  weight_decay: 0.0001
+  balanced_sampling: true
+  augment: true
+  selection_metric: roc_auc_presence
+  scheduler: cosine
+loss:
+  name: bce_dice
+  bce_weight: 0.35
+  dice_weight: 0.65
+  dice_positive_only: true
+  presence_bce_weight: 0.35
+  presence_bce_warmup_epochs: 4
+evaluation:
+  threshold: 0.5
+  tta: none
+  presence_score_mode: cls
+  presence_topk_frac: 0.01
+  presence_threshold: 0.5
+model:
+  name: simple_unet_dual_head
+  in_channels: 3
+  out_channels: 1
+  base_channels: 32
+  cls_hidden: 128
+  cls_dropout: 0.2
+runtime:
+  device: cuda
+  amp: true

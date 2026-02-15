@@ -1,0 +1,80 @@
+seed: 42
+task: segmentation
+dataset:
+  name: fracatlas
+  manifest: data/processed/fracatlas/manifests/all.csv
+input:
+  image_size: 512
+  preserve_aspect: true
+training:
+  batch_size: 2
+  num_workers: 0
+  epochs: 20
+  learning_rate: 0.0001
+  min_lr: 0.000001
+  weight_decay: 0.0001
+  optimizer: adamw
+  betas: [0.9, 0.999]
+  eps: 0.00000001
+  scheduler: cosine
+  grad_clip_norm: 1.0
+  balanced_sampling: true
+  augment: true
+  selection_metric: dice_pos
+  ema:
+    enabled: true
+    decay: 0.995
+  patch:
+    enabled: true
+    size: 256
+    positive_prob: 0.95
+    hard_negative_prob: 0.50
+    hard_negative_quantile: 0.92
+  augmentation:
+    positive_aug_multiplier: 1.10
+    affine_prob: 0.25
+    affine_max_degrees: 8.0
+    affine_translate_frac: 0.05
+    affine_scale_min: 0.90
+    affine_scale_max: 1.10
+    jitter_prob: 0.60
+    brightness: 0.25
+    contrast: 0.25
+    gamma_prob: 0.45
+    gamma_min: 0.75
+    gamma_max: 1.30
+    autocontrast_prob: 0.15
+    blur_prob: 0.15
+    blur_kernel: 5
+    blur_sigma_min: 0.1
+    blur_sigma_max: 1.2
+    noise_prob: 0.25
+    noise_std_min: 0.0
+    noise_std_max: 0.05
+    cutout_prob: 0.15
+    cutout_frac_min: 0.08
+    cutout_frac_max: 0.16
+loss:
+  name: bce_dice
+  bce_weight: 0.25
+  dice_weight: 0.75
+  dice_positive_only: true
+  pos_weight: 3.5
+  presence_bce_weight: 0.30
+  presence_bce_warmup_epochs: 4
+evaluation:
+  threshold: 0.5
+  tta: none
+  presence_score_mode: cls
+  presence_topk_frac: 0.01
+  presence_threshold: 0.5
+model:
+  name: simple_unet_dual_head
+  in_channels: 3
+  out_channels: 1
+  base_channels: 32
+  cls_hidden: 128
+  cls_dropout: 0.2
+runtime:
+  device: cuda
+  amp: true
